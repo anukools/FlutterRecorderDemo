@@ -2,8 +2,11 @@ import 'dart:async';
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter_ffmpeg/flutter_ffmpeg.dart';
 import 'package:flutter_sound/flutter_sound.dart';
-import 'package:flutter_sound_platform_interface/flutter_sound_recorder_platform_interface.dart';
+import 'package:flutter_sound_platform_interface/flutter_sound_recorder_platform_interface.dart' as AS;
+import 'package:just_audio/just_audio.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 /*
@@ -48,7 +51,7 @@ typedef _Fn = void Function();
 //const theSource = AudioSource.voiceUpLink;
 //const theSource = AudioSource.voiceDownlink;
 
-const theSource = AudioSource.voice_communication;
+const theSource = AS.AudioSource.voice_communication;
 
 /// Example app.
 class SimpleRecorder extends StatefulWidget {
@@ -57,9 +60,11 @@ class SimpleRecorder extends StatefulWidget {
 }
 
 class _SimpleRecorderState extends State<SimpleRecorder> {
-  Codec _codec = Codec.aacMP4;
-  String _mPath = 'tau_file.aac';
+  final Codec _codec = Codec.aacMP4;
+  final String _mPath = 'tau_file.aac';
+  final String _outputPath = 'tau_file1.aac';
   FlutterSoundPlayer? _mPlayer = FlutterSoundPlayer();
+  FlutterSoundPlayer? _mPlayer2 = FlutterSoundPlayer();
   FlutterSoundRecorder? _mRecorder = FlutterSoundRecorder();
   bool _mPlayerIsInited = false;
   bool _mRecorderIsInited = false;
@@ -68,6 +73,12 @@ class _SimpleRecorderState extends State<SimpleRecorder> {
   @override
   void initState() {
     _mPlayer!.openPlayer().then((value) {
+      setState(() {
+        _mPlayerIsInited = true;
+      });
+    });
+
+    _mPlayer2!.openPlayer().then((value) {
       setState(() {
         _mPlayerIsInited = true;
       });
@@ -86,45 +97,21 @@ class _SimpleRecorderState extends State<SimpleRecorder> {
     _mPlayer!.closePlayer();
     _mPlayer = null;
 
+    _mPlayer2!.closePlayer();
+    _mPlayer2 = null;
+
     _mRecorder!.closeRecorder();
     _mRecorder = null;
     super.dispose();
   }
 
   Future<void> openTheRecorder() async {
-    if (!kIsWeb) {
       var status = await Permission.microphone.request();
       if (status != PermissionStatus.granted) {
         throw RecordingPermissionException('Microphone permission not granted');
       }
-    }
+
     await _mRecorder!.openRecorder();
-    if (!await _mRecorder!.isEncoderSupported(_codec) && kIsWeb) {
-      _codec = Codec.opusWebM;
-      _mPath = 'tau_file.webm';
-      if (!await _mRecorder!.isEncoderSupported(_codec) && kIsWeb) {
-        _mRecorderIsInited = true;
-        return;
-      }
-    }
-    final session = await AudioSession.instance;
-    await session.configure(AudioSessionConfiguration(
-      avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
-      avAudioSessionCategoryOptions:
-      AVAudioSessionCategoryOptions.allowBluetooth |
-      AVAudioSessionCategoryOptions.defaultToSpeaker,
-      avAudioSessionMode: AVAudioSessionMode.voiceChat,
-      avAudioSessionRouteSharingPolicy:
-      AVAudioSessionRouteSharingPolicy.defaultPolicy,
-      avAudioSessionSetActiveOptions: AVAudioSessionSetActiveOptions.none,
-      androidAudioAttributes: const AndroidAudioAttributes(
-        contentType: AndroidAudioContentType.speech,
-        flags: AndroidAudioFlags.none,
-        usage: AndroidAudioUsage.voiceCommunication,
-      ),
-      androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
-      androidWillPauseWhenDucked: true,
-    ));
 
     _mRecorderIsInited = true;
   }
@@ -138,6 +125,7 @@ class _SimpleRecorderState extends State<SimpleRecorder> {
       codec: _codec,
       sampleRate: 44100,
       bitRate: 128000,
+      numChannels: 1,
       audioSource: theSource,
     )
         .then((value) {
@@ -154,15 +142,39 @@ class _SimpleRecorderState extends State<SimpleRecorder> {
     });
   }
 
-  void play() {
+  void playAmplify() async {
     assert(_mPlayerIsInited &&
         _mplaybackReady &&
-        _mRecorder!.isStopped &&
-        _mPlayer!.isStopped);
-    _mPlayer!
-        .startPlayer(
+        _mRecorder!.isStopped);
+
+    final direct = await getTemporaryDirectory();
+    String inputFilePath = "${direct.path}/$_mPath";
+    String outputFilePath = "${direct.path}/$_outputPath";
+    double amplificationFactor = 2.0; // Adjust the amplification factor as per your requirement
+
+    await amplifyAudio(inputFilePath, outputFilePath, amplificationFactor);
+
+    _mPlayer2!.startPlayer(
+        fromURI: _outputPath,
+        sampleRate: 44100,
+        codec:  Codec.aacADTS,
+        whenFinished: () {
+          setState(() {});
+        })
+        .then((value) {
+      setState(() {});
+    });
+  }
+
+  void play() async {
+    assert(_mPlayerIsInited &&
+        _mplaybackReady &&
+        _mRecorder!.isStopped);
+
+    _mPlayer!.startPlayer(
         fromURI: _mPath,
-        //codec: kIsWeb ? Codec.opusWebM : Codec.aacADTS,
+        sampleRate: 44100,
+        codec:  Codec.aacADTS,
         whenFinished: () {
           setState(() {});
         })
@@ -175,6 +187,25 @@ class _SimpleRecorderState extends State<SimpleRecorder> {
     _mPlayer!.stopPlayer().then((value) {
       setState(() {});
     });
+  }
+
+  void stopAmplifyPlayer() {
+    _mPlayer2!.stopPlayer().then((value) {
+      setState(() {});
+    });
+  }
+
+  Future amplifyAudio(String inputFilePath, String outputFilePath, double amplificationFactor) async {
+    final FlutterFFmpeg _flutterFFmpeg = FlutterFFmpeg();
+
+    String command = "-i $inputFilePath -af volume=$amplificationFactor $outputFilePath";
+    int rc = await _flutterFFmpeg.execute(command);
+    if (rc != 0) {
+      print("Failed to amplify audio:");
+    } else {
+      print("Audio amplification successful!");
+    }
+    return Future.value();
   }
 
 // ----------------------------- UI --------------------------------------------
@@ -193,6 +224,13 @@ class _SimpleRecorderState extends State<SimpleRecorder> {
     return _mPlayer!.isStopped ? play : stopPlayer;
   }
 
+  _Fn? getAmplifiedPlaybackFn() {
+    if (!_mPlayerIsInited || !_mplaybackReady || !_mRecorder!.isStopped) {
+      return null;
+    }
+    return _mPlayer2!.isStopped ? playAmplify : stopAmplifyPlayer;
+  }
+
   @override
   Widget build(BuildContext context) {
     Widget makeBody() {
@@ -205,7 +243,7 @@ class _SimpleRecorderState extends State<SimpleRecorder> {
             width: double.infinity,
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: Color(0xFFFAF0E6),
+              color: const Color(0xFFFAF0E6),
               border: Border.all(
                 color: Colors.indigo,
                 width: 3,
@@ -218,7 +256,7 @@ class _SimpleRecorderState extends State<SimpleRecorder> {
                 //disabledColor: Colors.grey,
                 child: Text(_mRecorder!.isRecording ? 'Stop' : 'Record'),
               ),
-              SizedBox(
+              const SizedBox(
                 width: 20,
               ),
               Text(_mRecorder!.isRecording
@@ -233,7 +271,7 @@ class _SimpleRecorderState extends State<SimpleRecorder> {
             width: double.infinity,
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: Color(0xFFFAF0E6),
+              color: const Color(0xFFFAF0E6),
               border: Border.all(
                 color: Colors.indigo,
                 width: 3,
@@ -246,14 +284,44 @@ class _SimpleRecorderState extends State<SimpleRecorder> {
                 //disabledColor: Colors.grey,
                 child: Text(_mPlayer!.isPlaying ? 'Stop' : 'Play'),
               ),
-              SizedBox(
+              const SizedBox(
                 width: 20,
               ),
               Text(_mPlayer!.isPlaying
                   ? 'Playback in progress'
                   : 'Player is stopped'),
             ]),
+
           ),
+          Container(
+            margin: const EdgeInsets.all(3),
+            padding: const EdgeInsets.all(3),
+            height: 80,
+            width: double.infinity,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: const Color(0xFFFAF0E6),
+              border: Border.all(
+                color: Colors.green,
+                width: 3,
+              ),
+            ),
+            child: Row(children: [
+              ElevatedButton(
+                onPressed: getAmplifiedPlaybackFn(),
+                //color: Colors.white,
+                //disabledColor: Colors.grey,
+                child: Text(_mPlayer2!.isPlaying ? 'Stop' : 'Play'),
+              ),
+              const SizedBox(
+                width: 20,
+              ),
+              Text(_mPlayer2!.isPlaying
+                  ? 'Amplify Playback in progress'
+                  : 'Amplify Player is stopped'),
+            ]),
+
+          )
         ],
       );
     }
