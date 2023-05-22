@@ -1,11 +1,9 @@
 import 'dart:async';
-import 'package:audio_session/audio_session.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_ffmpeg/flutter_ffmpeg.dart';
 import 'package:flutter_sound/flutter_sound.dart';
 import 'package:flutter_sound_platform_interface/flutter_sound_recorder_platform_interface.dart' as AS;
-import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -150,12 +148,19 @@ class _SimpleRecorderState extends State<SimpleRecorder> {
     final direct = await getTemporaryDirectory();
     String inputFilePath = "${direct.path}/$_mPath";
     String outputFilePath = "${direct.path}/$_outputPath";
-    double amplificationFactor = 2.0; // Adjust the amplification factor as per your requirement
+    double amplificationFactor = 4.0; // Adjust the amplification factor as per your requirement
+
+    // delete file if exist
+    var file = File(outputFilePath);
+    final isExist = await file.exists();
+    if (isExist) {
+      await file.delete();
+    }
 
     await amplifyAudio(inputFilePath, outputFilePath, amplificationFactor);
 
     _mPlayer2!.startPlayer(
-        fromURI: _outputPath,
+        fromURI: "${direct.path}/$_outputPath",
         sampleRate: 44100,
         codec:  Codec.aacADTS,
         whenFinished: () {

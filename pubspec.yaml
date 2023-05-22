@@ -39,7 +39,6 @@ dependencies:
   audio_session: ^0.1.14
   permission_handler: ^10.2.0
   assets_audio_player: ^3.0.6
-  just_audio: ^0.9.33
   path_provider: ^2.0.15
   flutter_ffmpeg: ^0.4.1
 
