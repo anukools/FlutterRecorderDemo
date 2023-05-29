@@ -41,6 +41,7 @@ dependencies:
   assets_audio_player: ^3.0.6
   path_provider: ^2.0.15
   flutter_ffmpeg: ^0.4.1
+  intl: ^0.18.1
 
 dev_dependencies:
   flutter_test:

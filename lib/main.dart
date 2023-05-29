@@ -1,9 +1,12 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:audio_session/audio_session.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_ffmpeg/flutter_ffmpeg.dart';
 import 'package:flutter_sound/flutter_sound.dart';
-import 'package:flutter_sound_platform_interface/flutter_sound_recorder_platform_interface.dart' as AS;
+import 'package:flutter_sound_platform_interface/flutter_sound_recorder_platform_interface.dart'
+    as AS;
+import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -20,6 +23,7 @@ import 'package:permission_handler/permission_handler.dart';
 void main() {
   runApp(MyApp());
 }
+
 class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
@@ -67,6 +71,8 @@ class _SimpleRecorderState extends State<SimpleRecorder> {
   bool _mPlayerIsInited = false;
   bool _mRecorderIsInited = false;
   bool _mplaybackReady = false;
+  String _recordingTime = '00:00:00';
+  String _playerTime = '00:00:00';
 
   @override
   void initState() {
@@ -104,19 +110,40 @@ class _SimpleRecorderState extends State<SimpleRecorder> {
   }
 
   Future<void> openTheRecorder() async {
-      var status = await Permission.microphone.request();
-      if (status != PermissionStatus.granted) {
-        throw RecordingPermissionException('Microphone permission not granted');
-      }
+    var status = await Permission.microphone.request();
+    if (status != PermissionStatus.granted) {
+      throw RecordingPermissionException('Microphone permission not granted');
+    }
 
     await _mRecorder!.openRecorder();
+    _mRecorder?.setSubscriptionDuration(const Duration(milliseconds: 100));
+    final session = await AudioSession.instance;
+    await session.configure(AudioSessionConfiguration(
+      avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
+      avAudioSessionCategoryOptions:
+          AVAudioSessionCategoryOptions.allowBluetooth |
+              AVAudioSessionCategoryOptions.defaultToSpeaker,
+      avAudioSessionMode: AVAudioSessionMode.spokenAudio,
+      avAudioSessionRouteSharingPolicy:
+          AVAudioSessionRouteSharingPolicy.defaultPolicy,
+      avAudioSessionSetActiveOptions: AVAudioSessionSetActiveOptions.none,
+      androidAudioAttributes: const AndroidAudioAttributes(
+        contentType: AndroidAudioContentType.speech,
+        flags: AndroidAudioFlags.none,
+        usage: AndroidAudioUsage.voiceCommunication,
+      ),
+      androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
+      androidWillPauseWhenDucked: true,
+    ));
 
     _mRecorderIsInited = true;
   }
 
   // ----------------------  Here is the code for recording and playback -------
 
-  void record() {
+  void record() async {
+    _recordingTime = '00:00:00';
+    _playerTime = '00:00:00';
     _mRecorder!
         .startRecorder(
       toFile: _mPath,
@@ -128,6 +155,15 @@ class _SimpleRecorderState extends State<SimpleRecorder> {
     )
         .then((value) {
       setState(() {});
+    });
+
+    _mRecorder?.onProgress?.listen((e) {
+      var date = DateTime.fromMillisecondsSinceEpoch(e.duration.inMilliseconds,
+          isUtc: true);
+      var txt = DateFormat('mm:ss:SS', 'en_US').format(date);
+      setState(() {
+        _recordingTime = txt.substring(0, 8);
+      });
     });
   }
 
@@ -141,14 +177,13 @@ class _SimpleRecorderState extends State<SimpleRecorder> {
   }
 
   void playAmplify() async {
-    assert(_mPlayerIsInited &&
-        _mplaybackReady &&
-        _mRecorder!.isStopped);
+    assert(_mPlayerIsInited && _mplaybackReady && _mRecorder!.isStopped);
 
     final direct = await getTemporaryDirectory();
     String inputFilePath = "${direct.path}/$_mPath";
     String outputFilePath = "${direct.path}/$_outputPath";
-    double amplificationFactor = 4.0; // Adjust the amplification factor as per your requirement
+    double amplificationFactor =
+        4.0; // Adjust the amplification factor as per your requirement
 
     // delete file if exist
     var file = File(outputFilePath);
@@ -159,32 +194,48 @@ class _SimpleRecorderState extends State<SimpleRecorder> {
 
     await amplifyAudio(inputFilePath, outputFilePath, amplificationFactor);
 
-    _mPlayer2!.startPlayer(
-        fromURI: "${direct.path}/$_outputPath",
-        sampleRate: 44100,
-        codec:  Codec.aacADTS,
-        whenFinished: () {
-          setState(() {});
-        })
+    _mPlayer2!
+        .startPlayer(
+            fromURI: "${direct.path}/$_outputPath",
+            sampleRate: 44100,
+            codec: Codec.aacADTS,
+            whenFinished: () {
+              setState(() {});
+            })
         .then((value) {
       setState(() {});
     });
   }
 
   void play() async {
-    assert(_mPlayerIsInited &&
-        _mplaybackReady &&
-        _mRecorder!.isStopped);
+    assert(_mPlayerIsInited && _mplaybackReady && _mRecorder!.isStopped);
 
-    _mPlayer!.startPlayer(
-        fromURI: _mPath,
-        sampleRate: 44100,
-        codec:  Codec.aacADTS,
-        whenFinished: () {
-          setState(() {});
-        })
+    await _mPlayer?.setVolume(1.0);
+
+    _mPlayer!
+        .startPlayer(
+            fromURI: _mPath,
+            sampleRate: 44100,
+            codec: Codec.aacADTS,
+            whenFinished: () {
+              setState(() {});
+            })
         .then((value) {
       setState(() {});
+    });
+
+    _mPlayer?.setSubscriptionDuration(const Duration(milliseconds: 100));
+
+    _playerTime = '00:00:00';
+    _mPlayer?.onProgress?.listen((e) {
+      // debugPrint(" Position ${e.position} Duration ${e.duration}");
+
+      var date = DateTime.fromMillisecondsSinceEpoch(e.position.inMilliseconds,
+          isUtc: true);
+      var txt = DateFormat('mm:ss:SS', 'en_US').format(date);
+      setState(() {
+        _playerTime = txt.substring(0, 8);
+      });
     });
   }
 
@@ -200,10 +251,12 @@ class _SimpleRecorderState extends State<SimpleRecorder> {
     });
   }
 
-  Future amplifyAudio(String inputFilePath, String outputFilePath, double amplificationFactor) async {
+  Future amplifyAudio(String inputFilePath, String outputFilePath,
+      double amplificationFactor) async {
     final FlutterFFmpeg _flutterFFmpeg = FlutterFFmpeg();
 
-    String command = "-i $inputFilePath -af volume=$amplificationFactor $outputFilePath";
+    String command =
+        "-i $inputFilePath -af volume=$amplificationFactor $outputFilePath";
     int rc = await _flutterFFmpeg.execute(command);
     if (rc != 0) {
       print("Failed to amplify audio:");
@@ -267,6 +320,10 @@ class _SimpleRecorderState extends State<SimpleRecorder> {
               Text(_mRecorder!.isRecording
                   ? 'Recording in progress'
                   : 'Recorder is stopped'),
+              const SizedBox(
+                width: 20,
+              ),
+              Text(_recordingTime)
             ]),
           ),
           Container(
@@ -295,8 +352,11 @@ class _SimpleRecorderState extends State<SimpleRecorder> {
               Text(_mPlayer!.isPlaying
                   ? 'Playback in progress'
                   : 'Player is stopped'),
+              const SizedBox(
+                width: 20,
+              ),
+              Text(_playerTime)
             ]),
-
           ),
           Container(
             margin: const EdgeInsets.all(3),
@@ -325,7 +385,6 @@ class _SimpleRecorderState extends State<SimpleRecorder> {
                   ? 'Amplify Playback in progress'
                   : 'Amplify Player is stopped'),
             ]),
-
           )
         ],
       );
